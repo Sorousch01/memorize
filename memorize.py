@@ -16,9 +16,17 @@ import os
 import csv
 import sys
 
+# Try pandas first (better for Python 3.13)
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    print("Warning: pandas not installed. Excel import may not work.")
+
+# Fallback to openpyxl
 try:
     import openpyxl
-
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
@@ -229,18 +237,37 @@ class DataManager:
         cards = []
         try:
             if filename.lower().endswith(('.xlsx', '.xls')):
-                if not HAS_OPENPYXL:
-                    return None, "Install openpyxl: pip install openpyxl"
-                wb = openpyxl.load_workbook(filename, read_only=True)
-                ws = wb.active
-                rows = list(ws.iter_rows(values_only=True))
-                wb.close()
-                start = 1 if rows and 'ront' in str(rows[0][0]).lower() else 0
-                for row in rows[start:]:
-                    if len(row) >= 2 and row[0] and row[1]:
-                        cards.append(FlashCard(str(row[0]).strip(), str(row[1]).strip(),
-                                               str(row[2]).strip() if len(row) > 2 and row[2] else ""))
+                # Try pandas first
+                if HAS_PANDAS:
+                    try:
+                        df = pd.read_excel(filename, header=None)
+                        for idx, row in df.iterrows():
+                            if len(row) >= 2 and pd.notna(row[0]) and pd.notna(row[1]):
+                                front = str(row[0]).strip()
+                                back = str(row[1]).strip()
+                                hint = str(row[2]).strip() if len(row) > 2 and pd.notna(row[2]) else ""
+                                cards.append(FlashCard(front, back, hint))
+                        return cards, None
+                    except Exception as e:
+                        print(f"Pandas import failed: {e}, falling back to openpyxl")
+                        # Fall through to openpyxl
+
+                # Fallback to openpyxl
+                if HAS_OPENPYXL:
+                    wb = openpyxl.load_workbook(filename, read_only=True)
+                    ws = wb.active
+                    rows = list(ws.iter_rows(values_only=True))
+                    wb.close()
+                    start = 1 if rows and 'ront' in str(rows[0][0]).lower() else 0
+                    for row in rows[start:]:
+                        if len(row) >= 2 and row[0] and row[1]:
+                            cards.append(FlashCard(str(row[0]).strip(), str(row[1]).strip(),
+                                                   str(row[2]).strip() if len(row) > 2 and row[2] else ""))
+                    return cards, None
+                else:
+                    return None, "Please install pandas (pip install pandas) or openpyxl (pip install openpyxl)"
             else:
+                # CSV import (unchanged)
                 with open(filename, 'r', encoding='utf-8') as f:
                     delim = '\t' if '\t' in f.read(1024) else ','
                     f.seek(0)
@@ -251,7 +278,7 @@ class DataManager:
                         if len(row) >= 2 and row[0].strip() and row[1].strip():
                             cards.append(FlashCard(row[0].strip(), row[1].strip(),
                                                    row[2].strip() if len(row) > 2 else ""))
-            return cards, None
+                return cards, None
         except Exception as e:
             return None, str(e)
 
